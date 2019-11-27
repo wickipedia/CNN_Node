@@ -1,5 +1,5 @@
 # parameters
-ARG REPO_NAME="<REPO_NAME_HERE>"
+ARG REPO_NAME="cnn_node"
 
 # ==================================================>
 # ==> Do not change this code
@@ -31,6 +31,13 @@ RUN apt-get update \
 
 # install python dependencies
 RUN pip install -r ${REPO_PATH}/dependencies-py.txt
+# install python dependencies
+# RUN pip install tensorflow
+# RUN pip install -r ${REPO_PATH}/dependencies-py.txt
+RUN pip install torchvision
+RUN pip install torch
+RUN pip install pandas
+RUN pip install scikit-image
 
 # copy the source code
 COPY . "${REPO_PATH}/"

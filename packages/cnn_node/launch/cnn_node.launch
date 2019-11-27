@@ -1,0 +1,3 @@
+<launch> 
+ <node pkg="cnn_node" type="compute_pose.py" name="cnn_node" output="screen"/>  
+</launch>
