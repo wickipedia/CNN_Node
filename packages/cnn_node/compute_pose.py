@@ -12,8 +12,7 @@ from cv_bridge import CvBridge
 from PIL import Image
 import sys
 from sensor_msgs.msg import CompressedImage
-from duckietown_msgs.msg import WheelsCmdStamped
-from duckietown_msgs.msg import 
+from duckietown_msgs.msg import WheelsCmdStamped, LanePose
 #from CNN_Model.CNN_Model import OurCNN
 from CNN_Model import OurCNN
 
@@ -69,6 +68,7 @@ class CNN_Node():
         #rospy.set_param('/' + self.vehicle + '/camera_node/res_w', 227) # 640
         #rospy.set_param('/' + self.vehicle + '/camera_node/res_h', 227) # 480
         topic = '/' + self.vehicle + '/imageSparse/compressed'
+        topicPub = '/'+self.vehicle+'/'+"LanePose"
         #model = models.resnet50(pretrained=True)
         #self.model = OurCNN()
         path_to_home = os.path.dirname(os.path.abspath(__file__))
@@ -96,6 +96,9 @@ class CNN_Node():
         rospy.init_node("cnn_node", anonymous=False)
         rospy.Subscriber(topic, CompressedImage, self.compute_pose, queue_size=1)
 
+        self.LanePosePub = rospy.Publisher(topicPub, LanePose, queue_size=10)
+        self.msgLanePose = LanePose()
+
         print("Initialized")
 
         # Model class must be defined somewhere
@@ -109,9 +112,12 @@ class CNN_Node():
         img_t = self.transforms(im_pil)
         X = img_t.unsqueeze(1)
         out = self.model(X)
-        print(out.detach().numpy()[0])
-
-
+        
+        self.msgLanePose.d = out.detach().numpy()[0][0]
+        self.msgLanePose.d_ref = 0
+        self.msgLanePose.phi = out.detach().numpy()[0][1]
+        self.msgLanePose.phi_ref = 0 
+        self.LanePosePub.publish(self.msgLanePose)
 
 if __name__ == '__main__':
     # Initialize the node
