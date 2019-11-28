@@ -34,8 +34,10 @@ RUN pip install -r ${REPO_PATH}/dependencies-py.txt
 # install python dependencies
 # RUN pip install tensorflow
 # RUN pip install -r ${REPO_PATH}/dependencies-py.txt
-RUN pip install torchvision
-RUN pip install torch
+RUN pip install torch==1.3.0+cpu torchvision==0.4.1+cpu -f https://download.pytorch.org/whl/torch_stable.html
+RUN pip install Pillow
+#RUN pip install torchvision
+#RUN pip install torch
 RUN pip install pandas
 RUN pip install scikit-image
 
