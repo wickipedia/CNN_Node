@@ -13,7 +13,10 @@ from PIL import Image
 import sys
 from sensor_msgs.msg import CompressedImage
 from duckietown_msgs.msg import WheelsCmdStamped
-from CNN_Model.CNN_Model import OurCNN
+from duckietown_msgs.msg import 
+#from CNN_Model.CNN_Model import OurCNN
+from CNN_Model import OurCNN
+
 
 class TransCropHorizon(object):
     """Crop the Horizon.
@@ -67,9 +70,11 @@ class CNN_Node():
         #rospy.set_param('/' + self.vehicle + '/camera_node/res_h', 227) # 480
         topic = '/' + self.vehicle + '/imageSparse/compressed'
         #model = models.resnet50(pretrained=True)
-        self.model = OurCNN()
-        #path_to_home = os.environ['HOME']
-        loc = "/media/elias/Samsung_T5/recordings_proj_lf_ml/savedModels/CNN_1574818091.5095592_lr0.1_bs16_epo120_Model"
+        #self.model = OurCNN()
+        path_to_home = os.path.dirname(os.path.abspath(__file__))
+        print(path_to_home)
+
+        loc = path_to_home + "/CNN_1574809608.4337816_lr0.1_bs16_epo80_Model"
         self.model = torch.load(loc, map_location=torch.device('cpu'))
 
         image_res = 64
@@ -86,8 +91,9 @@ class CNN_Node():
             ])
 
         self.model.eval()
-        self.model.double()
+        self.model.float()
 
+        rospy.init_node("cnn_node", anonymous=False)
         rospy.Subscriber(topic, CompressedImage, self.compute_pose, queue_size=1)
 
         print("Initialized")
@@ -95,21 +101,16 @@ class CNN_Node():
         # Model class must be defined somewhere
         #model.load_state_dict(torch.load('/code/catkin_ws/src/pytorch_test/packages/modelNode/model/lane_navigation.h5'))
 
-
-
-
         #model = torch.load('/code/catkin_ws/src/pytorch_test/packages/modelNode/model/conv_net_model.ckpt')
 
     def compute_pose(self, frame):
-        print('got frame')
         cv_image = CvBridge().compressed_imgmsg_to_cv2(frame, desired_encoding="passthrough")
         im_pil = Image.fromarray(cv_image)
-        img_t = self.transform(im_pil)
+        img_t = self.transforms(im_pil)
         X = img_t.unsqueeze(1)
-        out = model(X)
-        print(out)
+        out = self.model(X)
+        print(out.detach().numpy()[0])
 
-        return out
 
 
 if __name__ == '__main__':
