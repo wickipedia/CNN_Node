@@ -64,7 +64,7 @@ class CNN_Node():
         # Initialize the DTROS parent class
         #self.veh_name = rospy.get_namespace().strip("/")
         # Use the kinematics calibration for the gain and trim
-        self.vehicle = 'autobot04'
+        self.vehicle = 'queenmary2'
         #rospy.set_param('/' + self.vehicle + '/camera_node/res_w', 227) # 640
         #rospy.set_param('/' + self.vehicle + '/camera_node/res_h', 227) # 480
         topic = '/' + self.vehicle + '/imageSparse/compressed'
@@ -74,7 +74,7 @@ class CNN_Node():
         path_to_home = os.path.dirname(os.path.abspath(__file__))
         print(path_to_home)
 
-        loc = path_to_home + "/CNN_1574809608.4337816_lr0.1_bs16_epo80_Model"
+        loc = path_to_home + "/CNN_1574936479.7700994_lr0.05_bs16_epo100_Model_final"
         self.model = torch.load(loc, map_location=torch.device('cpu'))
 
         image_res = 64
@@ -117,6 +117,7 @@ class CNN_Node():
         self.msgLanePose.d_ref = 0
         self.msgLanePose.phi = out.detach().numpy()[0][1]
         self.msgLanePose.phi_ref = 0 
+        print(self.msgLanePose.d, self.msgLanePose.phi)
         self.LanePosePub.publish(self.msgLanePose)
 
 if __name__ == '__main__':
