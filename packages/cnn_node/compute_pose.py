@@ -72,7 +72,7 @@ class CNN_Node(DTROS):
 
         path_to_home = os.path.dirname(os.path.abspath(__file__))
         self.msg_wheels_cmd = WheelsCmdStamped()
-        loc = path_to_home + "/CNN_1574936479.7700994_lr0.05_bs16_epo100_Model_final"
+        loc = path_to_home + "/CNN_1575282886.6939018_lr0.05_bs16_epo200_Model_final"
         rospy.set_param("".join(['/', self.vehicle, '/camera_node/exposure_mode']), 'off')
         # change resolution camera
         #rospy.set_param('/' + self.vehicle + '/camera_node/res_w', 80)

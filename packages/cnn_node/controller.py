@@ -141,12 +141,12 @@ class lane_controller:
         self.d_offset = 0.0
         self.v_bar = 0.22
         #self.k_d = -3.5
-        self.k_d = -4.5
-        self.k_theta = -2
+        self.k_d = -3.5
+        self.k_theta = -5
         self.d_thres = 0.2615
         self.theta_thres = 0.523
         self.d_offset = 0.0
-        self.k_Id = 2
+        self.k_Id = 0
         self.k_Iphi = 0
         self.use_feedforward_part = False
         self.omega_ff = 0
@@ -162,8 +162,11 @@ class lane_controller:
 
         self.heading_err = phi
 
+        Kdh = 0
+        Kdp = 0
 
-        v = 0.15
+        v = 0.22
+        v_note = 0.22
 
         if math.fabs(self.cross_track_err) > self.d_thres:
             self.cross_track_err = self.cross_track_err / math.fabs(self.cross_track_err) * self.d_thres
@@ -203,8 +206,8 @@ class lane_controller:
             omega_feedforward = 0
 
         # Scale the parameters linear such that their real value is at 0.22m/s TODO do this nice that  * (0.22/self.v_bar)
-        omega = self.k_d * (0.15 / self.v_bar) * self.cross_track_err + self.k_theta * (
-                    0.15 / self.v_bar) * self.heading_err
+        omega = self.k_d * (v_note / self.v_bar) * self.cross_track_err + self.k_theta * (
+                    v_note / self.v_bar) * self.heading_err
         omega += (omega_feedforward)
 
         # check if nominal omega satisfies min radius, otherwise constrain it to minimal radius
@@ -214,16 +217,15 @@ class lane_controller:
                 self.heading_integral -= self.heading_err * dt
             omega = math.copysign(v / self.min_rad, omega)
 
-        Kdh = 4
-        Kdp = 0
+
 
         errorDiffCross = self.cross_track_err - self.cross_track_err_last
         errorDiffHead = self.heading_err - self.heading_err_last
 
         if not self.fsm_state == "SAFE_JOYSTICK_CONTROL":
             # apply integral correction (these should not affect radius, hence checked afterwards)
-            omega -= self.k_Id * (0.15 / self.v_bar) * self.cross_track_integral
-            omega -= self.k_Iphi * (0.15 / self.v_bar) * self.heading_integral
+            omega += self.k_Id * (v_note / self.v_bar) * self.cross_track_integral
+            omega += self.k_Iphi * (v_note / self.v_bar) * self.heading_integral
             omega += (Kdh * errorDiffCross + Kdp * errorDiffHead)
         if v == 0:
             omega = 0
