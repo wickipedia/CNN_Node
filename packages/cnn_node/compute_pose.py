@@ -11,7 +11,7 @@ import torch
 from cv_bridge import CvBridge
 from PIL import Image
 import sys
-from sensor_msgs.msg import CompressedImage
+from sensor_msgs.msg import CompressedImage, Temperature
 from duckietown_msgs.msg import WheelsCmdStamped, LanePose
 #from CNN_Model.CNN_Model import OurCNN
 from CNN_Model import OurCNN
@@ -96,8 +96,12 @@ class CNN_Node():
         rospy.init_node("cnn_node", anonymous=False)
         rospy.Subscriber(topic, CompressedImage, self.compute_pose, queue_size=1)
 
+        print("Init Publisher")
         self.LanePosePub = rospy.Publisher(topicPub, LanePose, queue_size=10)
         self.msgLanePose = LanePose()
+
+        self.TempPub = rospy.Publisher("/queenmary2/temp", Temperature, queue_size=1)
+        self.msgTemp = Temperature()
 
         print("Initialized")
 
@@ -115,10 +119,13 @@ class CNN_Node():
         
         self.msgLanePose.d = out.detach().numpy()[0][0]
         self.msgLanePose.d_ref = 0
-        self.msgLanePose.phi = out.detach().numpy()[0][1]
+        self.msgLanePose.phi = out.detach().numpy()[0][1]*3.14159
         self.msgLanePose.phi_ref = 0 
-        print(self.msgLanePose.d, self.msgLanePose.phi)
+        #print(self.msgLanePose.d, self.msgLanePose.phi)
+        self.msgTemp.variance = 0
+
         self.LanePosePub.publish(self.msgLanePose)
+        self.TempPub.publish(self.msgTemp)
 
 if __name__ == '__main__':
     # Initialize the node
