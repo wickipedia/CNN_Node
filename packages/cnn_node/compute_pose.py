@@ -11,8 +11,10 @@ import torch
 from cv_bridge import CvBridge
 from PIL import Image
 import sys
+from duckietown import DTROS
 from sensor_msgs.msg import CompressedImage, Temperature
 from duckietown_msgs.msg import WheelsCmdStamped, LanePose
+from controller import SteeringToWheelVelWrapper, lane_controller
 #from CNN_Model.CNN_Model import OurCNN
 from CNN_Model import OurCNN
 
@@ -58,25 +60,44 @@ class TransCropHorizon(object):
         return image
 
 
-class CNN_Node():
-    def __init__(self):
-
+class CNN_Node(DTROS):
+    def __init__(self, node_name):
         # Initialize the DTROS parent class
-        #self.veh_name = rospy.get_namespace().strip("/")
-        # Use the kinematics calibration for the gain and trim
+        super(CNN_Node, self).__init__(node_name=node_name)
         self.vehicle = 'queenmary2'
-        #rospy.set_param('/' + self.vehicle + '/camera_node/res_w', 227) # 640
-        #rospy.set_param('/' + self.vehicle + '/camera_node/res_h', 227) # 480
-        topic = '/' + self.vehicle + '/imageSparse/compressed'
+
+        topic = '/' + self.vehicle + '/camera_node/image/compressed'
+        print(topic)
         topicPub = '/'+self.vehicle+'/'+"LanePose"
-        #model = models.resnet50(pretrained=True)
-        #self.model = OurCNN()
+
         path_to_home = os.path.dirname(os.path.abspath(__file__))
-        print(path_to_home)
-
+        self.msg_wheels_cmd = WheelsCmdStamped()
         loc = path_to_home + "/CNN_1574936479.7700994_lr0.05_bs16_epo100_Model_final"
-        self.model = torch.load(loc, map_location=torch.device('cpu'))
+        rospy.set_param("".join(['/', self.vehicle, '/camera_node/exposure_mode']), 'off')
+        # change resolution camera
+        #rospy.set_param('/' + self.vehicle + '/camera_node/res_w', 80)
+        #rospy.set_param('/' + self.vehicle + '/camera_node/res_h', 60)
 
+        self.subscriber(topic, CompressedImage, self.compute_pose)
+
+        print("Init Publisher")
+        # self.LanePosePub = self.publisher(topicPub, LanePose, queue_size=10)
+        # self.msgLanePose = LanePose()
+        # self.veh_name = rospy.get_namespace().strip("/")
+        topicName = "".join(['/', self.vehicle, '/wheels_driver_node/wheels_cmd'])
+        print(topicName)
+        self.pub_wheels_cmd = self.publisher(topicName, WheelsCmdStamped, queue_size=1)
+
+        # self.TempPub = self.publisher("/queenmary2/temp", Temperature, queue_size=1)
+        # self.msgTemp = Temperature()
+
+        print("Initialized")
+        self.model = torch.load(loc, map_location=torch.device('cpu'))
+        self.angleSpeedConvertsion = SteeringToWheelVelWrapper()
+        # self.pidController = Controller(0.5,0.5,1,1,1,1)
+
+        self.pidController = lane_controller()
+        self.pidController.setGains()
         image_res = 64
 
         self.transforms = transforms.Compose([
@@ -93,42 +114,76 @@ class CNN_Node():
         self.model.eval()
         self.model.float()
 
-        rospy.init_node("cnn_node", anonymous=False)
-        rospy.Subscriber(topic, CompressedImage, self.compute_pose, queue_size=1)
-
-        print("Init Publisher")
-        self.LanePosePub = rospy.Publisher(topicPub, LanePose, queue_size=10)
-        self.msgLanePose = LanePose()
-
-        self.TempPub = rospy.Publisher("/queenmary2/temp", Temperature, queue_size=1)
-        self.msgTemp = Temperature()
-
-        print("Initialized")
 
         # Model class must be defined somewhere
         #model.load_state_dict(torch.load('/code/catkin_ws/src/pytorch_test/packages/modelNode/model/lane_navigation.h5'))
 
         #model = torch.load('/code/catkin_ws/src/pytorch_test/packages/modelNode/model/conv_net_model.ckpt')
 
+
+
+    def compute_action(self, observation):
+        #if observation.shape != self.preprocessor.transposed_shape:
+        #    observation = self.preprocessor.preprocess(observation)
+        action = self.model(observation)
+        print(action)
+        action = action.detach().numpy()[0]
+        v, omega = self.pidController.updatePose(action[0], action[1])
+
+
+        arrayReturn = np.array([v, omega])
+        vel = self.angleSpeedConvertsion.action(arrayReturn)
+        return vel.astype(float)
+
     def compute_pose(self, frame):
         cv_image = CvBridge().compressed_imgmsg_to_cv2(frame, desired_encoding="passthrough")
         im_pil = Image.fromarray(cv_image)
         img_t = self.transforms(im_pil)
         X = img_t.unsqueeze(1)
-        out = self.model(X)
-        
-        self.msgLanePose.d = out.detach().numpy()[0][0]
-        self.msgLanePose.d_ref = 0
-        self.msgLanePose.phi = out.detach().numpy()[0][1]*3.14159
-        self.msgLanePose.phi_ref = 0 
+        pwm_left, pwm_right = self.compute_action(X)
+        # Put the wheel commands in a message and publish
+        # Record the time the command was given to the wheels_driver
+        self.msg_wheels_cmd.header.stamp = rospy.get_rostime()
+        self.msg_wheels_cmd.vel_left = pwm_left
+        self.msg_wheels_cmd.vel_right = pwm_right
+        self.pub_wheels_cmd.publish(self.msg_wheels_cmd)
+        #self.msgLanePose.d = out.detach().numpy()[0][0]
+        #self.msgLanePose.d_ref = 0
+        #self.msgLanePose.phi = out.detach().numpy()[0][1]*3.14159
+        #self.msgLanePose.phi_ref = 0
         #print(self.msgLanePose.d, self.msgLanePose.phi)
-        self.msgTemp.variance = 0
+        #self.msgTemp.variance = 0
 
-        self.LanePosePub.publish(self.msgLanePose)
-        self.TempPub.publish(self.msgTemp)
+        #self.LanePosePub.publish(self.msgLanePose)
+        #self.TempPub.publish(self.msgTemp)
+
+    def onShutdown(self):
+        """Shutdown procedure.
+
+        Publishes a zero velocity command at shutdown."""
+
+        super(CNN_Node, self).onShutdown()
+        # MAKE SURE THAT THE LAST WHEEL COMMAND YOU PUBLISH IS ZERO,
+        # OTHERWISE YOUR DUCKIEBOT WILL CONTINUE MOVING AFTER
+        # THE NODE IS STOPPED
+
+        # PUT YOUR CODE HERE
+        #self.driver.setWheelsSpeed(left=0.0, right=0.0)
+
+        # Put the wheel commands in a message and publish
+        # Record the time the command was given to the wheels_driver
+        self.msg_wheels_cmd = WheelsCmdStamped()
+
+        self.msg_wheels_cmd.header.stamp = rospy.get_rostime()
+        self.msg_wheels_cmd.vel_left = 0
+        self.msg_wheels_cmd.vel_right = 0
+        rospy.sleep(1)
+        self.pub_wheels_cmd.publish(self.msg_wheels_cmd)
+        print('published')
+        self.log("Wheel commands published")
 
 if __name__ == '__main__':
     # Initialize the node
-    camera_node = CNN_Node()
+    camera_node = CNN_Node(node_name='cnn_node')
     # Keep it spinning to keep the node alive
     rospy.spin()
