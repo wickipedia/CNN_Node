@@ -152,10 +152,8 @@ class CNN_Node(DTROS):
         #self.msgLanePose.phi = out.detach().numpy()[0][1]*3.14159
         #self.msgLanePose.phi_ref = 0
         #print(self.msgLanePose.d, self.msgLanePose.phi)
-        #self.msgTemp.variance = 0
 
         #self.LanePosePub.publish(self.msgLanePose)
-        #self.TempPub.publish(self.msgTemp)
 
     def onShutdown(self):
         """Shutdown procedure.
