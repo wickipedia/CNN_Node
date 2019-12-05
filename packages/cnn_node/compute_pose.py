@@ -72,7 +72,7 @@ class CNN_Node(DTROS):
 
         path_to_home = os.path.dirname(os.path.abspath(__file__))
         self.msg_wheels_cmd = WheelsCmdStamped()
-        loc = path_to_home + "/CNN_1575282886.6939018_lr0.05_bs16_epo200_Model_final"
+        loc = path_to_home + "/CNN_1575287035.6950421_lr0.05_bs16_epo400_Model_final"
         rospy.set_param("".join(['/', self.vehicle, '/camera_node/exposure_mode']), 'off')
         # change resolution camera
         #rospy.set_param('/' + self.vehicle + '/camera_node/res_w', 80)
@@ -173,12 +173,13 @@ class CNN_Node(DTROS):
         # Put the wheel commands in a message and publish
         # Record the time the command was given to the wheels_driver
         self.msg_wheels_cmd = WheelsCmdStamped()
-
         self.msg_wheels_cmd.header.stamp = rospy.get_rostime()
-        self.msg_wheels_cmd.vel_left = 0
-        self.msg_wheels_cmd.vel_right = 0
-        rospy.sleep(1)
-        self.pub_wheels_cmd.publish(self.msg_wheels_cmd)
+        self.msg_wheels_cmd.vel_left = 0.0001
+        self.msg_wheels_cmd.vel_right = 0.0001
+        for g in range(0,10):
+
+            self.pub_wheels_cmd.publish(self.msg_wheels_cmd)
+
         print('published')
         self.log("Wheel commands published")
 

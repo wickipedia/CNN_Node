@@ -3,6 +3,7 @@ import math
 import time
 import numpy as np
 import time
+import os
 
 
 class SteeringToWheelVelWrapper:
@@ -14,13 +15,13 @@ class SteeringToWheelVelWrapper:
     def __init__(self,
 
         gain=1.0,
-        trim=0.0,
+        trim=-0.1,
         radius=0.0318,
         k=27.0,
         limit=1.0):
 
         # Should be adjusted so that the effective speed of the robot is 0.2 m/s
-        self.gain = gain
+        self.gain = float(os.environ['gain'])
 
         # Directional trim adjustment
         self.trim = trim
@@ -37,7 +38,6 @@ class SteeringToWheelVelWrapper:
 
     def action(self, action):
         vel, angle = action
-
         # Distance between the wheels
         baseline = 0.1
 
@@ -88,19 +88,7 @@ class lane_controller:
 
     def setGains(self):
         self.v_bar_gain_ref = 0.5
-        v_bar_fallback = 0.25  # nominal speed, 0.25m/s
         self.v_max = 1
-        k_theta_fallback = -2.0
-        k_d_fallback = - (k_theta_fallback ** 2) / (4.0 * self.v_bar_gain_ref)
-        theta_thres_fallback = math.pi / 6.0
-        d_thres_fallback = math.fabs(k_theta_fallback / k_d_fallback) * theta_thres_fallback
-        d_offset_fallback = 0.0
-
-        k_theta_fallback = k_theta_fallback
-        k_d_fallback = k_d_fallback
-
-        k_Id_fallback = 2.5
-        k_Iphi_fallback = 1.25
 
         self.fsm_state = None
         self.cross_track_err = 0
@@ -141,8 +129,10 @@ class lane_controller:
         self.d_offset = 0.0
         self.v_bar = 0.22
         #self.k_d = -3.5
+
         self.k_d = -3.5
         self.k_theta = -5
+
         self.d_thres = 0.2615
         self.theta_thres = 0.523
         self.d_offset = 0.0
@@ -158,12 +148,20 @@ class lane_controller:
         self.phi_ref = 0
         self.object_detected = 0
 
+
+        self.k_d = float(os.environ['kPd'])
+        self.k_theta = float(os.environ['kPp'])
+        self.k_Id = float(os.environ['kId'])
+        self.k_Iphi = float(os.environ['kIp'])
+        Kdh = float(os.environ['kDd'])
+        Kdp = float(os.environ['kDp'])
+
+
         self.cross_track_err = d - self.d_offset
 
         self.heading_err = phi
 
-        Kdh = 0
-        Kdp = 0
+
 
         v = 0.22
         v_note = 0.22
@@ -227,6 +225,7 @@ class lane_controller:
             omega += self.k_Id * (v_note / self.v_bar) * self.cross_track_integral
             omega += self.k_Iphi * (v_note / self.v_bar) * self.heading_integral
             omega += (Kdh * errorDiffCross + Kdp * errorDiffHead)
+
         if v == 0:
             omega = 0
         else:
@@ -234,6 +233,8 @@ class lane_controller:
             if v - 0.5 * math.fabs(omega) * 0.1 < 0.065:
                 v = 0.065 + 0.5 * math.fabs(omega) * 0.1
 
+        #if (np.abs(errorDiffCross) + np.abs(errorDiffHead)) > 0.05:
+            #v = v*0.3
         # apply magic conversion factors
         v = v * self.velocity_to_m_per_s
         omega = omega * self.omega_to_rad_per_s
