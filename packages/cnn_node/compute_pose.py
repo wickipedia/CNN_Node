@@ -11,7 +11,7 @@ import torch
 from cv_bridge import CvBridge
 from PIL import Image
 import sys
-from sensor_msgs.msg import CompressedImage, Temperature
+from sensor_msgs.msg import CompressedImage
 from duckietown_msgs.msg import WheelsCmdStamped, LanePose
 #from CNN_Model.CNN_Model import OurCNN
 from CNN_Model import OurCNN
@@ -64,7 +64,7 @@ class CNN_Node():
         # Initialize the DTROS parent class
         #self.veh_name = rospy.get_namespace().strip("/")
         # Use the kinematics calibration for the gain and trim
-        self.vehicle = 'queenmary2'
+        self.vehicle = 'autobot29'
         #rospy.set_param('/' + self.vehicle + '/camera_node/res_w', 227) # 640
         #rospy.set_param('/' + self.vehicle + '/camera_node/res_h', 227) # 480
         topic = '/' + self.vehicle + '/imageSparse/compressed'
@@ -74,7 +74,7 @@ class CNN_Node():
         path_to_home = os.path.dirname(os.path.abspath(__file__))
         print(path_to_home)
 
-        loc = path_to_home + "/CNN_1574936479.7700994_lr0.05_bs16_epo100_Model_final"
+        loc = path_to_home + "/CNN_1575287035.6950421_lr0.05_bs16_epo400_Model_final"
         self.model = torch.load(loc, map_location=torch.device('cpu'))
 
         image_res = 64
@@ -100,9 +100,6 @@ class CNN_Node():
         self.LanePosePub = rospy.Publisher(topicPub, LanePose, queue_size=10)
         self.msgLanePose = LanePose()
 
-        self.TempPub = rospy.Publisher("/queenmary2/temp", Temperature, queue_size=1)
-        self.msgTemp = Temperature()
-
         print("Initialized")
 
         # Model class must be defined somewhere
@@ -119,13 +116,11 @@ class CNN_Node():
         
         self.msgLanePose.d = out.detach().numpy()[0][0]
         self.msgLanePose.d_ref = 0
-        self.msgLanePose.phi = out.detach().numpy()[0][1]*3.14159
+        self.msgLanePose.phi = out.detach().numpy()[0][1]
         self.msgLanePose.phi_ref = 0 
-        #print(self.msgLanePose.d, self.msgLanePose.phi)
-        self.msgTemp.variance = 0
-
+        print(self.msgLanePose.d, self.msgLanePose.phi)
         self.LanePosePub.publish(self.msgLanePose)
-        self.TempPub.publish(self.msgTemp)
+
 
 if __name__ == '__main__':
     # Initialize the node
