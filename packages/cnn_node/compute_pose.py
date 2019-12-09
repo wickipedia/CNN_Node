@@ -284,6 +284,6 @@ class CNN_Node(DTROS):
 if __name__ == '__main__':
     # Initialize the node
     camera_node = CNN_Node(node_name='cnn_node')
-    camera_node.check_time_delay()
+    # camera_node.check_time_delay()
     # Keep it spinning to keep the node alive
     rospy.spin()

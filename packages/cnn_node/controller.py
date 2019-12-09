@@ -24,18 +24,12 @@ class SteeringToWheelVelWrapper:
 
         # Should be adjusted so that the effective speed of the robot is 0.2 m/s
         self.gain = float(os.environ['gain'])
-
+        self.vehicle = os.environ['VEHICLE_NAME']
         # Directional trim adjustment
-        self.trim = trim
-
-        # Wheel radius
-        self.radius = radius
-
-        # Motor constant
-        self.k = k
-
-        # Wheel velocity limit
-        self.limit = limit
+        self.trim = rospy.get_param("/"+self.vehicle+"/kinematics_node/trim")
+        self.radius = rospy.get_param("/"+self.vehicle+"/kinematics_node/radius")
+        self.k = rospy.get_param("/"+self.vehicle+"/kinematics_node/k")
+        self.limit = rospy.get_param("/"+self.vehicle+"/kinematics_node/limit")
         print('initialized wrapper')
 
     def action(self, action):
