@@ -67,13 +67,12 @@ class CNN_Node(DTROS):
         super(CNN_Node, self).__init__(node_name=node_name)
         self.vehicle = os.environ['veh']
 
-        topic = '/' + self.vehicle + '/imageSparse/compressed'
+        topic = '/' + self.vehicle + '/camera_node/image/compressed'
         print(topic)
         topicPub = '/'+self.vehicle+'/'+"LanePose"
 
         path_to_home = os.path.dirname(os.path.abspath(__file__))
         self.msg_wheels_cmd = WheelsCmdStamped()
-        loc = path_to_home + "/CNN_1575635134.292455_lr0.05_bs16_epo200_Model_temp"
         rospy.set_param("".join(['/', self.vehicle, '/camera_node/exposure_mode']), 'off')
         # change resolution camera
         #rospy.set_param('/' + self.vehicle + '/camera_node/res_w', 80)
@@ -86,11 +85,15 @@ class CNN_Node(DTROS):
         topicName = "".join(['/', self.vehicle, '/wheels_driver_node/wheels_cmd'])
         print(topicName)
         self.pub_wheels_cmd = self.publisher(topicName, WheelsCmdStamped, queue_size=1)
-        self.car_cmd_topic = "/" + self.vehicle + "/car_cmd"
+        self.car_cmd_topic = "/" + self.vehicle + "/lane_controller_node/car_cmd"
         self.pub_car_cmd = self.publisher(self.car_cmd_topic, Twist2DStamped, queue_size=1)
 
         print("Initialized")
-        self.model = torch.load(loc, map_location=torch.device('cpu'))
+        loc = path_to_home + "/CNN_1575755942.5007772_lr0.05_bs16_epo150_Model_finald"
+        self.model_d = torch.load(loc, map_location=torch.device('cpu'))
+
+        loc = path_to_home + "/CNN_1575756253.5257602_lr0.04_bs16_epo150_Model_finaltheta"
+        self.model_th = torch.load(loc, map_location=torch.device('cpu'))
         self.angleSpeedConvertsion = SteeringToWheelVelWrapper()
         # self.pidController = Controller(0.5,0.5,1,1,1,1)
 
@@ -109,8 +112,12 @@ class CNN_Node(DTROS):
             # transforms.Normalize(mean = [0.3,0.5,0.5],std = [0.21,0.5,0.5])
             ])
 
-        self.model.eval()
-        self.model.float()
+        self.model_d.eval()
+        self.model_d.float()
+
+        self.model_th.eval()
+        self.model_th.float()
+
 
         self.time_image_rec = None
         self.time_image_rec_prev = None
@@ -157,7 +164,12 @@ class CNN_Node(DTROS):
         if self.time_image_rec_prev is None:
             self.time_image_rec_prev = self.time_image_rec
 
-        state = self.model(X).detach().numpy()[0]
+        state = [0,0]
+        state[0] = self.model_d(X).detach().numpy()[0][0]
+        state[1] = self.model_th(X).detach().numpy()[0][1]
+
+        # print(state)
+        
         if self.state_prev is None:
             self.state_prev = state
 
@@ -165,10 +177,13 @@ class CNN_Node(DTROS):
             dt = self.time_image_rec - self.time_image_rec_prev
             state_est = self.time_propagation(self.state_prev, dt.to_sec())
             state = self.kalman_update(state, state_est)
+            print('kalman',state)
+
 
         if self.time_prop:
             dt = rospy.get_rostime().to_sec() - self.time_image_rec.to_sec()
             state = self.time_propagation(state, dt)
+            print('time_prop', state)
 
         # print(state)
         v, omega = self.pidController.updatePose(state[0], state[1])
@@ -180,15 +195,20 @@ class CNN_Node(DTROS):
 
         self.pub_car_cmd.publish(car_cmd_msg)
 
+        print((self.time_image_rec.to_sec() - self.time_image_rec_prev.to_sec()))
         self.time_image_rec_prev = self.time_image_rec
         self.state_prev = state
 
         # Put the wheel commands in a message and publish
         # Record the time the command was given to the wheels_driver
         # self.msg_wheels_cmd.header.stamp = rospy.get_rostime()
-        # self.msg_wheels_cmd.vel_left = pwm_left
-        # self.msg_wheels_cmd.vel_right = pwm_right
-        # self.pub_wheels_cmd.publish(self.msg_wheels_cmd)
+        arrayReturn = np.array([v, omega])
+        vel = self.angleSpeedConvertsion.action(arrayReturn)
+        pwm_left, pwm_right = vel.astype(float)
+
+        self.msg_wheels_cmd.vel_left = pwm_left
+        self.msg_wheels_cmd.vel_right = pwm_right
+        self.pub_wheels_cmd.publish(self.msg_wheels_cmd)
         #self.msgLanePose.d = out.detach().numpy()[0][0]
         #self.msgLanePose.d_ref = 0
         #self.msgLanePose.phi = out.detach().numpy()[0][1]*3.14159
@@ -214,7 +234,7 @@ class CNN_Node(DTROS):
     def time_propagation(self, state, dt):
         # print(dt)
         state[0] = state[0] + math.sin(state[1])*dt*self.cmd_prev[0]
-        state[1] = state[1] + dt*self.cmd_prev[1]
+        state[1] = state[1] + dt*self.cmd_prev[1]/360
         print(state)
         return state
 
@@ -240,14 +260,14 @@ class CNN_Node(DTROS):
 
         # Put the wheel commands in a message and publish
         # Record the time the command was given to the wheels_driver
-        self.onShutdown = True
+        self.onShutdown_trigger = True
         rospy.sleep(1)
 
         self.msg_wheels_cmd = WheelsCmdStamped()
         self.msg_wheels_cmd.header.stamp = rospy.get_rostime()
         self.msg_wheels_cmd.vel_left = 0.0001
         self.msg_wheels_cmd.vel_right = 0.0001
-        for g in range(0,10):
+        for g in range(0,50):
             self.pub_wheels_cmd.publish(self.msg_wheels_cmd)
 
         print('published')

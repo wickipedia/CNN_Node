@@ -3,6 +3,7 @@ import math
 import time
 import numpy as np
 import time
+import rospy
 import os
 
 
@@ -10,6 +11,7 @@ class SteeringToWheelVelWrapper:
     """
     Converts policy that was trained with [velocity|heading] actions to
     [wheelvel_left|wheelvel_right] to comply with AIDO evaluation format
+
     """
 
     def __init__(self,
@@ -46,8 +48,8 @@ class SteeringToWheelVelWrapper:
         k_l = self.k
 
         # adjusting k by gain and trim
-        k_r_inv = (self.gain + self.trim) / k_r
-        k_l_inv = (self.gain - self.trim) / k_l
+        k_r_inv = (self.gain *(1+self.trim)) / k_r
+        k_l_inv = (self.gain *(1-self.trim)) / k_l
 
         omega_r = (vel + 0.5 * angle * baseline) / self.radius
         omega_l = (vel - 0.5 * angle * baseline) / self.radius
@@ -121,21 +123,27 @@ class lane_controller:
         self.sleepMaintenance = False
 
 
-    def updatePose(self, d, phi):
+    def updatePose(self, d, phi, image_timestamp=0):
+        # Calculating the delay image processing took
+        # timestamp_now = rospy.Time.now()
+        # image_delay_stamp = timestamp_now - image_timestamp
+
+        # delay from taking the image until now in seconds
+        # image_delay = image_delay_stamp.secs + image_delay_stamp.nsecs / 1e9
+        # print(image_delay)
 
         prev_cross_track_err = self.cross_track_err
         prev_heading_err = self.heading_err
 
-        self.d_offset = 0.0
         self.v_bar = 0.22
         #self.k_d = -3.5
 
         self.k_d = -3.5
         self.k_theta = -5
 
-        self.d_thres = 0.2615
+        self.d_thres = 1#0.2615
         self.theta_thres = 0.523
-        self.d_offset = 0.0
+        self.d_offset = 0.03
         self.k_Id = 0
         self.k_Iphi = 0
         self.use_feedforward_part = False
@@ -143,7 +151,7 @@ class lane_controller:
         self.omega_max = 999
         self.omega_min = -999
         self.use_radius_limit = True
-        self.min_rad = 0.06
+        self.min_rad = 0.04
         self.d_ref = 0
         self.phi_ref = 0
         self.object_detected = 0
@@ -172,9 +180,9 @@ class lane_controller:
         currentMillis = int(round(time.time() * 1000))
 
         if self.last_ms is not None:
-            dt = (currentMillis - self.last_ms) / 1000.0
-            self.cross_track_integral += self.cross_track_err * dt
-            self.heading_integral += self.heading_err * dt
+            self.dt = (currentMillis - self.last_ms) / 1000.0
+            self.cross_track_integral += self.cross_track_err * self.dt
+            self.heading_integral += self.heading_err * self.dt
 
         if self.cross_track_integral > self.cross_track_integral_top_cutoff:
             self.cross_track_integral = self.cross_track_integral_top_cutoff
@@ -186,11 +194,9 @@ class lane_controller:
         if self.heading_integral < self.heading_integral_bottom_cutoff:
             self.heading_integral = self.heading_integral_bottom_cutoff
 
-        if abs(
-                self.cross_track_err) <= 0.011:  # TODO: replace '<= 0.011' by '< delta_d' (but delta_d might need to be sent by the lane_filter_node.py or even lane_filter.py)
+        if abs(self.cross_track_err) <= 0.011:  # TODO: replace '<= 0.011' by '< delta_d' (but delta_d might need to be sent by the lane_filter_node.py or even lane_filter.py)
             self.cross_track_integral = 0
-        if abs(
-                self.heading_err) <= 0.051:  # TODO: replace '<= 0.051' by '< delta_phi' (but delta_phi might need to be sent by the lane_filter_node.py or even lane_filter.py)
+        if abs(self.heading_err) <= 0.051:  # TODO: replace '<= 0.051' by '< delta_phi' (but delta_phi might need to be sent by the lane_filter_node.py or even lane_filter.py)
             self.heading_integral = 0
         if np.sign(self.cross_track_err) != np.sign(prev_cross_track_err):  # sign of error changed => error passed zero
             self.cross_track_integral = 0
@@ -204,15 +210,14 @@ class lane_controller:
             omega_feedforward = 0
 
         # Scale the parameters linear such that their real value is at 0.22m/s TODO do this nice that  * (0.22/self.v_bar)
-        omega = self.k_d * (v_note / self.v_bar) * self.cross_track_err + self.k_theta * (
-                    v_note / self.v_bar) * self.heading_err
+        omega = self.k_d * (v_note / self.v_bar) * self.cross_track_err + self.k_theta * (v_note / self.v_bar) * self.heading_err
         omega += (omega_feedforward)
 
         # check if nominal omega satisfies min radius, otherwise constrain it to minimal radius
         if math.fabs(omega) > v / self.min_rad:
-            if self.last_ms is not None:
-                self.cross_track_integral -= self.cross_track_err * dt
-                self.heading_integral -= self.heading_err * dt
+            # if self.last_ms is not None:
+            #     self.cross_track_integral -= self.cross_track_err * self.dt
+            #     self.heading_integral -= self.heading_err * self.dt
             omega = math.copysign(v / self.min_rad, omega)
 
 
@@ -224,14 +229,14 @@ class lane_controller:
             # apply integral correction (these should not affect radius, hence checked afterwards)
             omega += self.k_Id * (v_note / self.v_bar) * self.cross_track_integral
             omega += self.k_Iphi * (v_note / self.v_bar) * self.heading_integral
-            omega += (Kdh * errorDiffCross + Kdp * errorDiffHead)
+            # omega += (Kdh * errorDiffCross/self.dt + Kdp * errorDiffHead/self.dt)
 
-        if v == 0:
-            omega = 0
-        else:
-            # check if velocity is large enough such that car can actually execute desired omega
-            if v - 0.5 * math.fabs(omega) * 0.1 < 0.065:
-                v = 0.065 + 0.5 * math.fabs(omega) * 0.1
+        # if v == 0:
+        #     omega = 0
+        # else:
+        #     # check if velocity is large enough such that car can actually execute desired omega
+        #     if v - 0.5 * math.fabs(omega) * 0.1 < 0.065:
+        #         v = 0.065 + 0.5 * math.fabs(omega) * 0.1
 
         #if (np.abs(errorDiffCross) + np.abs(errorDiffHead)) > 0.05:
             #v = v*0.3
@@ -244,4 +249,6 @@ class lane_controller:
         omega += self.omega_ff
         self.cross_track_err_last = self.cross_track_err
         self.heading_err_last = self.heading_err
+        self.last_ms = currentMillis
+
         return v, omega
