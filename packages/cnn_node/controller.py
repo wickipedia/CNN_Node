@@ -125,7 +125,14 @@ class lane_controller:
         self.sleepMaintenance = False
 
 
-    def updatePose(self, d, phi, image_timestamp):
+    def updatePose(self, d, phi, image_timestamp=0):
+        # Calculating the delay image processing took
+        # timestamp_now = rospy.Time.now()
+        # image_delay_stamp = timestamp_now - image_timestamp
+
+        # delay from taking the image until now in seconds
+        # image_delay = image_delay_stamp.secs + image_delay_stamp.nsecs / 1e9
+        # print(image_delay)
 
         # Calculating the delay image processing took
         timestamp_now = rospy.Time.now()
@@ -140,6 +147,7 @@ class lane_controller:
 
         self.k_Id = 0
         self.k_Iphi = 0
+
 
         self.k_Dd = 0
         self.k_Dphi= 0
@@ -180,6 +188,7 @@ class lane_controller:
             self.cross_track_differential = (self.cross_track_err - self.cross_track_err_last)/self.dt
             self.heading_differential = (self.heading_err - self.heading_err_last)/self.dt
 
+
         # Check integrals
         if self.cross_track_integral > self.cross_track_integral_top_cutoff:
             self.cross_track_integral = self.cross_track_integral_top_cutoff
@@ -190,7 +199,6 @@ class lane_controller:
             self.heading_integral = self.heading_integral_top_cutoff
         if self.heading_integral < self.heading_integral_bottom_cutoff:
             self.heading_integral = self.heading_integral_bottom_cutoff
-
 
 
         # if abs(self.cross_track_err) <= 0.011:  # TODO: replace '<= 0.011' by '< delta_d' (but delta_d might need to be sent by the lane_filter_node.py or even lane_filter.py)
@@ -211,6 +219,7 @@ class lane_controller:
             omega += (self.k_Id * (self.v_des / self.v_bar) * self.cross_track_integral) + (self.k_Iphi * (self.v_des / self.v_bar) * self.heading_integral)
             omega += (self.k_Dd * (self.v_des / self.v_bar) * self.cross_track_differential) + (self.k_Dphi * (self.v_des / self.v_bar) * self.heading_differential)
 
+
         # apply magic conversion factors
         v = (self.v_des / self.v_bar) * self.velocity_to_m_per_s
         omega = omega * self.omega_to_rad_per_s
@@ -225,5 +234,6 @@ class lane_controller:
         self.cross_track_err_last = self.cross_track_err
         self.heading_err_last = self.heading_err
         self.last_ms = currentMillisec
+
 
         return v, omega

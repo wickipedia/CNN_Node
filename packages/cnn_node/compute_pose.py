@@ -7,13 +7,14 @@ import rospy
 import yaml
 from torchvision import models, transforms
 import torch
+import math
 
 from cv_bridge import CvBridge
 from PIL import Image
 import sys
 from duckietown import DTROS
 from sensor_msgs.msg import CompressedImage, Temperature
-from duckietown_msgs.msg import WheelsCmdStamped, LanePose
+from duckietown_msgs.msg import WheelsCmdStamped, LanePose, Twist2DStamped
 from controller import SteeringToWheelVelWrapper, lane_controller
 #from CNN_Model.CNN_Model import OurCNN
 from CNN_Model import OurCNN
@@ -79,8 +80,6 @@ class CNN_Node(DTROS):
         #rospy.set_param('/' + self.vehicle + '/camera_node/res_w', 80)
         #rospy.set_param('/' + self.vehicle + '/camera_node/res_h', 60)
 
-        self.subscriber(topic, CompressedImage, self.compute_pose)
-
         print("Init Publisher")
         # self.LanePosePub = self.publisher(topicPub, LanePose, queue_size=10)
         # self.msgLanePose = LanePose()
@@ -88,9 +87,8 @@ class CNN_Node(DTROS):
         topicName = "".join(['/', self.vehicle, '/wheels_driver_node/wheels_cmd'])
         print(topicName)
         self.pub_wheels_cmd = self.publisher(topicName, WheelsCmdStamped, queue_size=1)
-
-        # self.TempPub = self.publisher("/queenmary2/temp", Temperature, queue_size=1)
-        # self.msgTemp = Temperature()
+        self.car_cmd_topic = "/" + self.vehicle + "/lane_controller_node/car_cmd"
+        self.pub_car_cmd = self.publisher(self.car_cmd_topic, Twist2DStamped, queue_size=1)
 
         print("Initialized")
         self.model = torch.load(loc, map_location=torch.device('cpu'))
@@ -113,8 +111,24 @@ class CNN_Node(DTROS):
             # transforms.Normalize(mean = [0.3,0.5,0.5],std = [0.21,0.5,0.5])
             ])
 
-        self.model.eval()
-        self.model.float()
+        self.model_d.eval()
+        self.model_d.float()
+
+        self.model_th.eval()
+        self.model_th.float()
+
+
+        self.time_image_rec = None
+        self.time_image_rec_prev = None
+        self.time_prop = False
+        # numpy array with the command history for delay
+        self.cmd_prev = [0, 0]
+        self.state_prev = None
+        self.onShutdown_trigger = False
+        self.kalman_update_trigger = False
+        self.subscriber(topic, CompressedImage, self.compute_pose)
+
+        rospy.on_shutdown(self.onShutdown)
 
         self.model_theta.eval()
         self.model_theta.float()
@@ -127,32 +141,74 @@ class CNN_Node(DTROS):
 
 
 
-    def compute_action(self, observation, image_timestamp):
+    # def compute_action(self, observation):
         #if observation.shape != self.preprocessor.transposed_shape:
         #    observation = self.preprocessor.preprocess(observation)
-        action = self.model(observation)
-        action_theta = self.model_theta(observation)
-        print(action[:,0],action_theta[:,1])
-        action = action.detach().numpy()[0]
-        action_theta = action_theta.detach().numpy()[0]
-        v, omega = self.pidController.updatePose(action[0], action_theta[1], image_timestamp)
-        print(v,omega)
 
+        # return v, omega
 
-        arrayReturn = np.array([v, omega])
-        vel = self.angleSpeedConvertsion.action(arrayReturn)
-        return vel.astype(float)
+        # arrayReturn = np.array([v, omega])
+        # vel = self.angleSpeedConvertsion.action(arrayReturn)
+        # return vel.astype(float)
 
     def compute_pose(self, frame):
+        if self.onShutdown_trigger:
+            return
+
+        self.kalman_update_trigger = rospy.get_param("~kalman")
+        self.time_prop = rospy.get_param("~time_prop")
         cv_image = CvBridge().compressed_imgmsg_to_cv2(frame, desired_encoding="passthrough")
         im_pil = Image.fromarray(cv_image)
         img_t = self.transforms(im_pil)
-        X = img_t.unsqueeze(0)
-        image_timestamp = frame.header.stamp
-        pwm_left, pwm_right = self.compute_action(X, image_timestamp)
+
+        X = img_t.unsqueeze(1)
+
+        self.time_image_rec = frame.header.stamp
+        if self.time_image_rec_prev is None:
+            self.time_image_rec_prev = self.time_image_rec
+
+        state = [0,0]
+        state[0] = self.model_d(X).detach().numpy()[0][0]
+        state[1] = self.model_th(X).detach().numpy()[0][1]
+
+        # print(state)
+        
+        if self.state_prev is None:
+            self.state_prev = state
+
+        if self.kalman_update_trigger:
+            dt = self.time_image_rec - self.time_image_rec_prev
+            state_est = self.time_propagation(self.state_prev, dt.to_sec())
+            state = self.kalman_update(state, state_est)
+            print('kalman',state)
+
+
+        if self.time_prop:
+            dt = rospy.get_rostime().to_sec() - self.time_image_rec.to_sec()
+            state = self.time_propagation(state, dt)
+            print('time_prop', state)
+
+        # print(state)
+        v, omega = self.pidController.updatePose(state[0], state[1])
+        car_cmd_msg = Twist2DStamped()
+        car_cmd_msg.header.stamp = rospy.get_rostime()
+        car_cmd_msg.v = v
+        car_cmd_msg.omega = omega
+        self.cmd_prev = [v, omega]
+
+        self.pub_car_cmd.publish(car_cmd_msg)
+
+        print((self.time_image_rec.to_sec() - self.time_image_rec_prev.to_sec()))
+        self.time_image_rec_prev = self.time_image_rec
+        self.state_prev = state
+
         # Put the wheel commands in a message and publish
         # Record the time the command was given to the wheels_driver
-        self.msg_wheels_cmd.header.stamp = rospy.get_rostime()
+        # self.msg_wheels_cmd.header.stamp = rospy.get_rostime()
+        arrayReturn = np.array([v, omega])
+        vel = self.angleSpeedConvertsion.action(arrayReturn)
+        pwm_left, pwm_right = vel.astype(float)
+
         self.msg_wheels_cmd.vel_left = pwm_left
         self.msg_wheels_cmd.vel_right = pwm_right
         self.pub_wheels_cmd.publish(self.msg_wheels_cmd)
@@ -164,12 +220,40 @@ class CNN_Node(DTROS):
 
         #self.LanePosePub.publish(self.msgLanePose)
 
+
+    def check_time_delay(self):
+        r = rospy.Rate(20)
+        if self.time_image_rec is None:
+            return
+
+        if (self.time_image_rec.to_sec() - rospy.get_rostime().to_sec()) > 0.5:
+            car_cmd_msg = Twist2DStamped()
+            car_cmd_msg.v = 0
+            car_cmd_msg.omega = 0
+            self.pub_car_cmd.publish(car_cmd_msg)
+            self.cmd_prev = [car_cmd_msg.v, car_cmd_msg.omega]
+        r.sleep()
+
+    def time_propagation(self, state, dt):
+        # print(dt)
+        state[0] = state[0] + math.sin(state[1])*dt*self.cmd_prev[0]
+        state[1] = state[1] + dt*self.cmd_prev[1]/360
+        print(state)
+        return state
+
+    def kalman_update(self, state, state_est):
+        y = np.array(state)
+        x_prev = np.array(state_est)
+        K = np.array([[0.7320508075688774,0],[0,0.8541019662496846]])
+        state = x_prev + K.dot(y - x_prev)
+        return [state[0], state[1]]
+
+
     def onShutdown(self):
         """Shutdown procedure.
 
         Publishes a zero velocity command at shutdown."""
 
-        super(CNN_Node, self).onShutdown()
         # MAKE SURE THAT THE LAST WHEEL COMMAND YOU PUBLISH IS ZERO,
         # OTHERWISE YOUR DUCKIEBOT WILL CONTINUE MOVING AFTER
         # THE NODE IS STOPPED
@@ -179,19 +263,23 @@ class CNN_Node(DTROS):
 
         # Put the wheel commands in a message and publish
         # Record the time the command was given to the wheels_driver
+        self.onShutdown_trigger = True
+        rospy.sleep(1)
+
         self.msg_wheels_cmd = WheelsCmdStamped()
         self.msg_wheels_cmd.header.stamp = rospy.get_rostime()
         self.msg_wheels_cmd.vel_left = 0.0001
         self.msg_wheels_cmd.vel_right = 0.0001
-        for g in range(0,20):
-
+        for g in range(0,50):
             self.pub_wheels_cmd.publish(self.msg_wheels_cmd)
 
         print('published')
         self.log("Wheel commands published")
+        super(CNN_Node, self).onShutdown()
 
 if __name__ == '__main__':
     # Initialize the node
     camera_node = CNN_Node(node_name='cnn_node')
+    camera_node.check_time_delay()
     # Keep it spinning to keep the node alive
     rospy.spin()
