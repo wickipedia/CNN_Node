@@ -3,5 +3,6 @@
 <launch> 
  <param name="~kalman" type="bool" value="False" />
  <param name="~time_prop" type="bool" value="False" />
+ <param name="~car_cmd" type="bool" value="False" />
  <node pkg="cnn_node" type="compute_pose.py" name="cnn_node" output="screen"/>  
 </launch>

@@ -126,6 +126,7 @@ class CNN_Node(DTROS):
         self.state_prev = None
         self.onShutdown_trigger = False
         self.kalman_update_trigger = False
+        self.trigger_car_cmd = False
         self.subscriber(topic, CompressedImage, self.compute_pose)
 
         rospy.on_shutdown(self.onShutdown)
@@ -157,6 +158,8 @@ class CNN_Node(DTROS):
 
         self.kalman_update_trigger = rospy.get_param("~kalman")
         self.time_prop = rospy.get_param("~time_prop")
+        self.trigger_car_cmd = rospy.get_param("~car_cmd")
+
         cv_image = CvBridge().compressed_imgmsg_to_cv2(frame, desired_encoding="passthrough")
         im_pil = Image.fromarray(cv_image)
         img_t = self.transforms(im_pil)
@@ -190,13 +193,14 @@ class CNN_Node(DTROS):
 
         # print(state)
         v, omega = self.pidController.updatePose(state[0], state[1])
-        car_cmd_msg = Twist2DStamped()
-        car_cmd_msg.header.stamp = rospy.get_rostime()
-        car_cmd_msg.v = v
-        car_cmd_msg.omega = omega
-        self.cmd_prev = [v, omega]
 
-        self.pub_car_cmd.publish(car_cmd_msg)
+        if self.trigger_car_cmd:
+            car_cmd_msg = Twist2DStamped()
+            car_cmd_msg.header.stamp = rospy.get_rostime()
+            car_cmd_msg.v = v
+            car_cmd_msg.omega = omega
+            self.cmd_prev = [v, omega]
+            self.pub_car_cmd.publish(car_cmd_msg)
 
         print((self.time_image_rec.to_sec() - self.time_image_rec_prev.to_sec()))
         self.time_image_rec_prev = self.time_image_rec
