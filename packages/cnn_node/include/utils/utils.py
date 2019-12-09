@@ -2,7 +2,7 @@ import numpy as np
 import csv
 
 
-def compute_kalman_gains(q=[5,0.2], r=[5, 0.2], p0=[5, 0.2], step_range=100):
+def compute_kalman_gains(q=[0.1,0.5], r=[0.05, 0.1], p0=[5, 0.2], step_range=100):
 	F=np.eye(2)
 	H=np.eye(2)
 	Q=np.array([[q[0],0],[0,q[1]]])
@@ -25,8 +25,6 @@ def compute_kalman_gains(q=[5,0.2], r=[5, 0.2], p0=[5, 0.2], step_range=100):
 				csvrow.append(val.tolist())
 			kalman_writer.writerow(csvrow)
 			Pupd = np.matmul((np.eye(2) - np.matmul(K,H)), Pest)
-
-
 
 
 if __name__ == '__main__':
