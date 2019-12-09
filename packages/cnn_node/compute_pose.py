@@ -64,7 +64,7 @@ class CNN_Node(DTROS):
     def __init__(self, node_name):
         # Initialize the DTROS parent class
         super(CNN_Node, self).__init__(node_name=node_name)
-        self.vehicle = 'queenmary2'
+        self.vehicle = os.environ['VEHICLE_NAME']
 
         topic = '/' + self.vehicle + '/camera_node/image/compressed'
         print(topic)
@@ -72,8 +72,9 @@ class CNN_Node(DTROS):
 
         path_to_home = os.path.dirname(os.path.abspath(__file__))
         self.msg_wheels_cmd = WheelsCmdStamped()
-        loc = path_to_home + "/CNN_1575287035.6950421_lr0.05_bs16_epo400_Model_final"
-        rospy.set_param("".join(['/', self.vehicle, '/camera_node/exposure_mode']), 'off')
+        loc = path_to_home + "/CNN_1575282886.6939018_lr0.05_bs16_epo200_Model_final"
+        loc_theta = path_to_home + "/CNN_1575756253.5257602_lr0.04_bs16_epo150_Model_finaltheta"
+        rospy.set_param("".join(['/', self.vehicle, '/camera_node/exposure_mode']), 'auto')
         # change resolution camera
         #rospy.set_param('/' + self.vehicle + '/camera_node/res_w', 80)
         #rospy.set_param('/' + self.vehicle + '/camera_node/res_h', 60)
@@ -93,11 +94,12 @@ class CNN_Node(DTROS):
 
         print("Initialized")
         self.model = torch.load(loc, map_location=torch.device('cpu'))
+        self.model_theta = torch.load(loc_theta, map_location=torch.device('cpu'))
         self.angleSpeedConvertsion = SteeringToWheelVelWrapper()
         # self.pidController = Controller(0.5,0.5,1,1,1,1)
 
         self.pidController = lane_controller()
-        self.pidController.setGains()
+        self.pidController.setParams()
         image_res = 64
 
         self.transforms = transforms.Compose([
@@ -114,6 +116,9 @@ class CNN_Node(DTROS):
         self.model.eval()
         self.model.float()
 
+        self.model_theta.eval()
+        self.model_theta.float()
+
 
         # Model class must be defined somewhere
         #model.load_state_dict(torch.load('/code/catkin_ws/src/pytorch_test/packages/modelNode/model/lane_navigation.h5'))
@@ -122,13 +127,16 @@ class CNN_Node(DTROS):
 
 
 
-    def compute_action(self, observation):
+    def compute_action(self, observation, image_timestamp):
         #if observation.shape != self.preprocessor.transposed_shape:
         #    observation = self.preprocessor.preprocess(observation)
         action = self.model(observation)
-        print(action)
+        action_theta = self.model_theta(observation)
+        print(action[:,0],action_theta[:,1])
         action = action.detach().numpy()[0]
-        v, omega = self.pidController.updatePose(action[0], action[1])
+        action_theta = action_theta.detach().numpy()[0]
+        v, omega = self.pidController.updatePose(action[0], action_theta[1], image_timestamp)
+        print(v,omega)
 
 
         arrayReturn = np.array([v, omega])
@@ -139,8 +147,9 @@ class CNN_Node(DTROS):
         cv_image = CvBridge().compressed_imgmsg_to_cv2(frame, desired_encoding="passthrough")
         im_pil = Image.fromarray(cv_image)
         img_t = self.transforms(im_pil)
-        X = img_t.unsqueeze(1)
-        pwm_left, pwm_right = self.compute_action(X)
+        X = img_t.unsqueeze(0)
+        image_timestamp = frame.header.stamp
+        pwm_left, pwm_right = self.compute_action(X, image_timestamp)
         # Put the wheel commands in a message and publish
         # Record the time the command was given to the wheels_driver
         self.msg_wheels_cmd.header.stamp = rospy.get_rostime()
@@ -174,7 +183,7 @@ class CNN_Node(DTROS):
         self.msg_wheels_cmd.header.stamp = rospy.get_rostime()
         self.msg_wheels_cmd.vel_left = 0.0001
         self.msg_wheels_cmd.vel_right = 0.0001
-        for g in range(0,10):
+        for g in range(0,20):
 
             self.pub_wheels_cmd.publish(self.msg_wheels_cmd)
 
