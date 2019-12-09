@@ -73,7 +73,7 @@ class CNN_Node(DTROS):
 
         path_to_home = os.path.dirname(os.path.abspath(__file__))
         self.msg_wheels_cmd = WheelsCmdStamped()
-        loc = path_to_home + "/CNN_1575282886.6939018_lr0.05_bs16_epo200_Model_final"
+        loc_d = path_to_home + "/CNN_1575282886.6939018_lr0.05_bs16_epo200_Model_final"
         loc_theta = path_to_home + "/CNN_1575756253.5257602_lr0.04_bs16_epo150_Model_finaltheta"
         rospy.set_param("".join(['/', self.vehicle, '/camera_node/exposure_mode']), 'auto')
         # change resolution camera
@@ -91,8 +91,8 @@ class CNN_Node(DTROS):
         self.pub_car_cmd = self.publisher(self.car_cmd_topic, Twist2DStamped, queue_size=1)
 
         print("Initialized")
-        self.model = torch.load(loc, map_location=torch.device('cpu'))
-        self.model_theta = torch.load(loc_theta, map_location=torch.device('cpu'))
+        self.model_d = torch.load(loc_d, map_location=torch.device('cpu'))
+        self.model_th = torch.load(loc_theta, map_location=torch.device('cpu'))
         self.angleSpeedConvertsion = SteeringToWheelVelWrapper()
         # self.pidController = Controller(0.5,0.5,1,1,1,1)
 
@@ -131,8 +131,6 @@ class CNN_Node(DTROS):
 
         rospy.on_shutdown(self.onShutdown)
 
-        self.model_theta.eval()
-        self.model_theta.float()
 
 
         # Model class must be defined somewhere
@@ -258,28 +256,17 @@ class CNN_Node(DTROS):
 
         Publishes a zero velocity command at shutdown."""
 
-        # MAKE SURE THAT THE LAST WHEEL COMMAND YOU PUBLISH IS ZERO,
-        # OTHERWISE YOUR DUCKIEBOT WILL CONTINUE MOVING AFTER
-        # THE NODE IS STOPPED
-
-        # PUT YOUR CODE HERE
-        #self.driver.setWheelsSpeed(left=0.0, right=0.0)
-
-        # Put the wheel commands in a message and publish
-        # Record the time the command was given to the wheels_driver
         self.onShutdown_trigger = True
         rospy.sleep(1)
 
         self.msg_wheels_cmd = WheelsCmdStamped()
         self.msg_wheels_cmd.header.stamp = rospy.get_rostime()
-        self.msg_wheels_cmd.vel_left = 0.0001
-        self.msg_wheels_cmd.vel_right = 0.0001
+        self.msg_wheels_cmd.vel_left = 0.0
+        self.msg_wheels_cmd.vel_right = 0.0
         for g in range(0,50):
             self.pub_wheels_cmd.publish(self.msg_wheels_cmd)
 
-        print('published')
-        self.log("Wheel commands published")
-        super(CNN_Node, self).onShutdown()
+        self.log("Peace Out")
 
 if __name__ == '__main__':
     # Initialize the node

@@ -30,6 +30,8 @@ class SteeringToWheelVelWrapper:
         self.radius = rospy.get_param("/"+self.vehicle+"/kinematics_node/radius")
         self.k = rospy.get_param("/"+self.vehicle+"/kinematics_node/k")
         self.limit = rospy.get_param("/"+self.vehicle+"/kinematics_node/limit")
+        
+        print(self.trim, self.radius, self.k, self.limit)
         print('initialized wrapper')
 
     def action(self, action):
@@ -127,13 +129,6 @@ class lane_controller:
         # delay from taking the image until now in seconds
         # image_delay = image_delay_stamp.secs + image_delay_stamp.nsecs / 1e9
         # print(image_delay)
-
-        # Calculating the delay image processing took
-        timestamp_now = rospy.Time.now()
-        image_delay_stamp = timestamp_now - image_timestamp
-        image_delay = image_delay_stamp.secs + image_delay_stamp.nsecs / 1e9
-        self.image_delay = image_delay
-        print(self.image_delay)
 
         # update those controller params every iteration
         self.k_d = 0
