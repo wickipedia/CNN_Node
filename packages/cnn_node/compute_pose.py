@@ -17,8 +17,68 @@ from sensor_msgs.msg import CompressedImage, Temperature
 from duckietown_msgs.msg import WheelsCmdStamped, LanePose, Twist2DStamped
 from controller import SteeringToWheelVelWrapper, lane_controller
 #from CNN_Model.CNN_Model import OurCNN
-from CNN_Model import OurCNN
+from CNN_Model import OurCNN_d, OurCNN_th
 
+
+class ToCustomTensor(object):
+    """Convert a ``PIL.Image`` or ``numpy.ndarray`` to tensor.
+
+    Converts a PIL.Image or numpy.ndarray (H x W x C) in the range
+    [0, 255] to a torch.FloatTensor of shape (C x H x W) in the range [0.0, 1.0].
+    """
+
+    def __init__(self, use_convcoord):
+        self.use_convcoord = use_convcoord
+
+
+    def __call__(self, pic):
+        """
+        Args:
+            pic (PIL.Image or numpy.ndarray): Image to be converted to tensor.
+
+        Returns:
+            Tensor: Converted image.
+        """
+        # handle numpy arrays
+        if isinstance(pic, np.ndarray):
+            # handle numpy array
+            if pic.ndim == 2:
+                pic = pic[:, :, None]
+
+            if self.use_convcoord:
+                pic[:,:,0] = pic[:,:,0]/255
+            else:
+                pic = pic/255
+
+            img = torch.from_numpy(pic.transpose((2, 0, 1)))
+            return img.float()
+
+        # handle PIL Image
+        if pic.mode == 'I':
+            img = torch.from_numpy(np.array(pic, np.int32, copy=False))
+        elif pic.mode == 'I;16':
+            img = torch.from_numpy(np.array(pic, np.int16, copy=False))
+        elif pic.mode == 'F':
+            img = torch.from_numpy(np.array(pic, np.float32, copy=False))
+        elif pic.mode == '1':
+            img = 255 * torch.from_numpy(np.array(pic, np.uint8, copy=False))
+        else:
+            img = torch.ByteTensor(torch.ByteStorage.from_buffer(pic.tobytes()))
+        # PIL image mode: L, LA, P, I, F, RGB, YCbCr, RGBA, CMYK
+        if pic.mode == 'YCbCr':
+            nchannel = 3
+        elif pic.mode == 'I;16':
+            nchannel = 1
+        else:
+            nchannel = len(pic.mode)
+        img = img.view(pic.size[1], pic.size[0], nchannel)
+        # put it from HWC to CHW format
+        # yikes, this transpose takes 80% of the loading time/CPU
+        img = img.transpose(0, 1).transpose(0, 2).contiguous()
+        if isinstance(img, torch.ByteTensor):
+            return img.float().div(255)
+        else:
+            return img
 
 class TransCropHorizon(object):
     """Crop the Horizon.
@@ -73,14 +133,11 @@ class CNN_Node(DTROS):
 
         path_to_home = os.path.dirname(os.path.abspath(__file__))
         self.msg_wheels_cmd = WheelsCmdStamped()
-        loc_d = path_to_home + "/CNN_1575282886.6939018_lr0.05_bs16_epo200_Model_final"
-        loc_theta = path_to_home + "/CNN_1575756253.5257602_lr0.04_bs16_epo150_Model_finaltheta"
-        rospy.set_param("".join(['/', self.vehicle, '/camera_node/exposure_mode']), 'auto')
+        rospy.set_param("".join(['/', self.vehicle, '/camera_node/exposure_mode']), 'off')
         # change resolution camera
         #rospy.set_param('/' + self.vehicle + '/camera_node/res_w', 80)
         #rospy.set_param('/' + self.vehicle + '/camera_node/res_h', 60)
 
-        print("Init Publisher")
         # self.LanePosePub = self.publisher(topicPub, LanePose, queue_size=10)
         # self.msgLanePose = LanePose()
         # self.veh_name = rospy.get_namespace().strip("/")
@@ -91,8 +148,12 @@ class CNN_Node(DTROS):
         self.pub_car_cmd = self.publisher(self.car_cmd_topic, Twist2DStamped, queue_size=1)
 
         print("Initialized")
-        self.model_d = torch.load(loc_d, map_location=torch.device('cpu'))
-        self.model_th = torch.load(loc_theta, map_location=torch.device('cpu'))
+        loc_d = path_to_home + "/CNN_1575930267.2686896_lr0.05_bs16_epo150_Model_final_crop03_SQD_Huber_w_statedict"
+        loc_theta = path_to_home + "/CNN_1575756253.5257602_lr0.04_bs16_epo150_Model_finaltheta_w_statedict"
+        self.model_d = OurCNN_d(as_gray=True,use_convcoord=False)
+        self.model_d.load_state_dict(torch.load(loc_d))
+        self.model_th = OurCNN_th(as_gray=True, use_convcoord=False)
+        self.model_th.load_state_dict(torch.load(loc_theta))  
         self.angleSpeedConvertsion = SteeringToWheelVelWrapper()
         # self.pidController = Controller(0.5,0.5,1,1,1,1)
 
@@ -100,16 +161,26 @@ class CNN_Node(DTROS):
         self.pidController.setParams()
         image_res = 64
 
-        self.transforms = transforms.Compose([
+        self.transforms_d = transforms.Compose([
+            transforms.Resize(image_res),
+            TransCropHorizon(0.3, set_black=False),
+            # transforms.RandomCrop(, padding=None, pad_if_needed=False, fill=0, padding_mode='constant')
+            transforms.Grayscale(num_output_channels=1),
+            # TransConvCoord(),
+            ToCustomTensor(False),
+            # transforms.Normalize(mean = [0.3,0.5,0.5],std = [0.21,0.5,0.5])
+            ])
+
+        self.transforms_th = transforms.Compose([
             transforms.Resize(image_res),
             TransCropHorizon(0.5, set_black=False),
             # transforms.RandomCrop(, padding=None, pad_if_needed=False, fill=0, padding_mode='constant')
             transforms.Grayscale(num_output_channels=1),
             # TransConvCoord(),
-            # ToCustomTensor(),
-            transforms.ToTensor(),
+            ToCustomTensor(False),
             # transforms.Normalize(mean = [0.3,0.5,0.5],std = [0.21,0.5,0.5])
             ])
+
 
         self.model_d.eval()
         self.model_d.float()
@@ -117,7 +188,7 @@ class CNN_Node(DTROS):
         self.model_th.eval()
         self.model_th.float()
 
-
+        self.cmd_exec = None
         self.time_image_rec = None
         self.time_image_rec_prev = None
         self.time_prop = False
@@ -127,6 +198,7 @@ class CNN_Node(DTROS):
         self.onShutdown_trigger = False
         self.kalman_update_trigger = False
         self.trigger_car_cmd = False
+        self.trigger_exec_cmd = False
         self.subscriber(topic, CompressedImage, self.compute_pose)
 
         rospy.on_shutdown(self.onShutdown)
@@ -154,26 +226,45 @@ class CNN_Node(DTROS):
         if self.onShutdown_trigger:
             return
 
+        if self.cmd_exec is None:
+            self.cmd_exec = rospy.get_rostime()
+
+        if (rospy.get_rostime().to_sec() - self.cmd_exec.to_sec()) > 0.3 and not self.trigger_exec_cmd:
+            self.trigger_exec_cmd = True
+            self.cmd_exec = rospy.get_rostime()
+        elif (rospy.get_rostime().to_sec() - self.cmd_exec.to_sec()) > 1.0 and self.trigger_exec_cmd:
+            self.trigger_exec_cmd = False
+            self.cmd_exec = rospy.get_rostime()
+
+        if self.trigger_exec_cmd:
+            self.msg_wheels_cmd = WheelsCmdStamped()
+            self.msg_wheels_cmd.header.stamp = rospy.get_rostime()
+            self.msg_wheels_cmd.vel_left = 0.0
+            self.msg_wheels_cmd.vel_right = 0.0
+            self.pub_wheels_cmd.publish(self.msg_wheels_cmd)
+            return
+
         self.kalman_update_trigger = rospy.get_param("~kalman")
         self.time_prop = rospy.get_param("~time_prop")
         self.trigger_car_cmd = rospy.get_param("~car_cmd")
 
         cv_image = CvBridge().compressed_imgmsg_to_cv2(frame, desired_encoding="passthrough")
         im_pil = Image.fromarray(cv_image)
-        img_t = self.transforms(im_pil)
-
-        X = img_t.unsqueeze(1)
+        img_t = self.transforms_d(im_pil)
+        X_d = img_t.unsqueeze(1)
+        img_t = self.transforms_th(im_pil)
+        X_th = img_t.unsqueeze(1)
 
         self.time_image_rec = frame.header.stamp
         if self.time_image_rec_prev is None:
             self.time_image_rec_prev = self.time_image_rec
 
         state = [0,0]
-        state[0] = self.model_d(X).detach().numpy()[0][0]
-        state[1] = self.model_th(X).detach().numpy()[0][1]
+        model_before = rospy.get_rostime()
+        state[0] = self.model_d(X_d).detach().numpy()[0][0]
+        state[1] = self.model_th(X_th).detach().numpy()[0][1]
+        print(state)
 
-        # print(state)
-        
         if self.state_prev is None:
             self.state_prev = state
 
@@ -190,7 +281,7 @@ class CNN_Node(DTROS):
             print('time_prop', state)
 
         # print(state)
-        v, omega = self.pidController.updatePose(state[0], state[1])
+        v, omega = self.pidController.updatePose(state[0], state[1], self.time_image_rec, time_prop=self.time_prop)
 
         if self.trigger_car_cmd:
             car_cmd_msg = Twist2DStamped()
@@ -200,17 +291,18 @@ class CNN_Node(DTROS):
             self.cmd_prev = [v, omega]
             self.pub_car_cmd.publish(car_cmd_msg)
 
-        print((self.time_image_rec.to_sec() - self.time_image_rec_prev.to_sec()))
+        # print((self.time_image_rec.to_sec() - self.time_image_rec_prev.to_sec()))
         self.time_image_rec_prev = self.time_image_rec
         self.state_prev = state
 
         # Put the wheel commands in a message and publish
         # Record the time the command was given to the wheels_driver
-        # self.msg_wheels_cmd.header.stamp = rospy.get_rostime()
+        print(v,omega)
         arrayReturn = np.array([v, omega])
         vel = self.angleSpeedConvertsion.action(arrayReturn)
         pwm_left, pwm_right = vel.astype(float)
 
+        self.msg_wheels_cmd.header.stamp = rospy.get_rostime()
         self.msg_wheels_cmd.vel_left = pwm_left
         self.msg_wheels_cmd.vel_right = pwm_right
         self.pub_wheels_cmd.publish(self.msg_wheels_cmd)
@@ -224,17 +316,22 @@ class CNN_Node(DTROS):
 
 
     def check_time_delay(self):
-        r = rospy.Rate(20)
-        if self.time_image_rec is None:
-            return
+        r = rospy.Rate(10)
+        self.cmd_exec = rospy.get_rostime()
+            
 
-        if (self.time_image_rec.to_sec() - rospy.get_rostime().to_sec()) > 0.5:
-            car_cmd_msg = Twist2DStamped()
-            car_cmd_msg.v = 0
-            car_cmd_msg.omega = 0
-            self.pub_car_cmd.publish(car_cmd_msg)
-            self.cmd_prev = [car_cmd_msg.v, car_cmd_msg.omega]
-        r.sleep()
+        # if (self.time_image_rec.to_sec() - rospy.get_rostime().to_sec()) > 0.5:
+            # car_cmd_msg = Twist2DStamped()
+            # car_cmd_msg.v = 0
+            # car_cmd_msg.omega = 0
+            # self.pub_car_cmd.publish(car_cmd_msg)
+            # self.cmd_prev = [car_cmd_msg.v, car_cmd_msg.omega]
+
+        while True:
+            if (rospy.get_rostime().to_sec() - self.cmd_exec.to_sec()) > 0.3:
+                self.trigger_exec_cmd = True if not self.trigger_exec_cmd else False
+                self.cmd_exec = rospy.get_rostime()
+            r.sleep()
 
     def time_propagation(self, state, dt):
         # print(dt)
@@ -271,6 +368,6 @@ class CNN_Node(DTROS):
 if __name__ == '__main__':
     # Initialize the node
     camera_node = CNN_Node(node_name='cnn_node')
-    # camera_node.check_time_delay()
+    #camera_node.check_time_delay()
     # Keep it spinning to keep the node alive
     rospy.spin()

@@ -30,7 +30,8 @@ class SteeringToWheelVelWrapper:
         self.radius = rospy.get_param("/"+self.vehicle+"/kinematics_node/radius")
         self.k = rospy.get_param("/"+self.vehicle+"/kinematics_node/k")
         self.limit = rospy.get_param("/"+self.vehicle+"/kinematics_node/limit")
-        
+
+
         print(self.trim, self.radius, self.k, self.limit)
         print('initialized wrapper')
 
@@ -83,6 +84,9 @@ class lane_controller:
         self.omega_to_rad_per_s = 4.75
         self.setParams()
         print('initialized lane_controller')
+        self.omega_prev = 0
+        self.v_prev = 0
+
         # Subscriptions
 
     def setParams(self):
@@ -121,14 +125,15 @@ class lane_controller:
         self.sleepMaintenance = False
 
 
-    def updatePose(self, d, phi, image_timestamp=0):
+    def updatePose(self, d, phi, image_timestamp, time_prop=False):
         # Calculating the delay image processing took
-        # timestamp_now = rospy.Time.now()
-        # image_delay_stamp = timestamp_now - image_timestamp
+        timestamp_now = rospy.get_rostime()
+        image_delay_stamp = timestamp_now - image_timestamp
+        print(image_delay_stamp.to_sec())
 
         # delay from taking the image until now in seconds
-        # image_delay = image_delay_stamp.secs + image_delay_stamp.nsecs / 1e9
-        # print(image_delay)
+        # image_delay_stamp = image_delay_stamp.secs + image_delay_stamp.nsecs / 1e9
+        # print(image_delay_stamp)
 
         # update those controller params every iteration
         self.k_d = 0
@@ -142,7 +147,7 @@ class lane_controller:
         self.k_Dphi= 0
 
         # Offsets compensating learning or optimize position on lane
-        self.d_offset = 0.06
+        self.d_offset = 0.03
 
         # Params which are update by OS input
         self.k_d = float(os.environ['kPd'])
@@ -153,15 +158,19 @@ class lane_controller:
         self.k_Dphi = float(os.environ['kDp'])
         self.v_des = float(os.environ['v_des'])
 
-        # if self.image_delay > 0.2:
-        #     self.v_des = 0.05
-        # else:
-        #     self.v_des = self.v_des
+        # if image_delay_stamp.to_sec() > 0.1 and image_delay_stamp.to_sec() < 1:
+        #     self.v_des = 0.01*(1 - image_delay_stamp.to_sec())
+        # elif image_delay_stamp.to_sec() > 1:
+        #     self.v_des = 0
 
+        # time propagation
+        # if time_prop:
+        #     d = d + math.sin(phi)*image_delay_stamp.to_sec()*self.v_prev
+        #     phi = phi + image_delay_stamp.to_sec()*self.omega_prev/360
 
         # Calc errors
         self.cross_track_err = d - self.d_offset
-        self.heading_err = phi
+        self.heading_err = phi  #*(1-self.cross_track_err)**2
 
         currentMillisec = int(round(time.time() * 1000))
 
@@ -224,5 +233,7 @@ class lane_controller:
         self.heading_err_last = self.heading_err
         self.last_ms = currentMillisec
 
+        self.v_prev = v
+        self.omega_prev = omega
 
         return v, omega
