@@ -17,14 +17,13 @@ class SteeringToWheelVelWrapper:
     def __init__(self,
 
         gain=1.0,
-        trim=0.1,
+        trim=0.0,
         radius=0.0318,
         k=27.0,
         limit=1.0):
 
         self.vehicle = os.environ['VEHICLE_NAME']
 
-        t1 = rospy.get_rostime()
         try:        
             self.gain = float(os.environ['gain'])
             self.trim = rospy.get_param("/"+self.vehicle+"/kinematics_node/trim")
@@ -32,20 +31,19 @@ class SteeringToWheelVelWrapper:
             self.k = rospy.get_param("/"+self.vehicle+"/kinematics_node/k")
             self.limit = rospy.get_param("/"+self.vehicle+"/kinematics_node/limit")
         except KeyError:
-            print("No ROS params")
+            print("No ROS params. Use default values")
             self.gain = gain
             self.trim = trim
             self.radius = radius
             self.k = k
             self.limit = limit
-        t2 = rospy.get_rostime() - t1
-        print("time rosparam get", t2.to_sec())
 
 
         print('initialized wrapper')
 
     def action(self, action):
         vel, angle = action
+
         # Distance between the wheels
         baseline = 0.1
 
@@ -54,8 +52,8 @@ class SteeringToWheelVelWrapper:
         k_l = self.k
 
         # adjusting k by gain and trim
-        k_r_inv = (self.gain *(1+self.trim)) / k_r
-        k_l_inv = (self.gain *(1-self.trim)) / k_l
+        k_r_inv = (self.gain + self.trim) / k_r
+        k_l_inv = (self.gain - self.trim) / k_l
 
         omega_r = (vel + 0.5 * angle * baseline) / self.radius
         omega_l = (vel - 0.5 * angle * baseline) / self.radius
@@ -77,25 +75,22 @@ class lane_controller:
     def __init__(self):
         # Init Params which are independent of controller
         self.lane_reading = None
-        self.last_ms = None
-        self.dt = 0
         self.pub_counter = 0
         self.fsm_state = None
         self.v_des = 0.22
         self.v_bar = 0.22
 
-        # TODO-TAL weird double initialisation
-        self.velocity_to_m_per_s = 0.67
-        self.omega_to_rad_per_s = 0.45 * 2 * math.pi
+        self.phi_last = None
+
+        #Timing
+        self.time_update_pose = None
+        self.time_update_pose_last = None
 
         # Setup parameters
         self.velocity_to_m_per_s = 1.53
         self.omega_to_rad_per_s = 4.75
         self.setParams()
         print('initialized lane_controller')
-        self.omega_prev = 0
-        self.v_prev = 0
-
         # Subscriptions
 
     def setParams(self):
@@ -110,20 +105,20 @@ class lane_controller:
         self.heading_differential = 0
 
         # Init controller cutoffs
-        self.cross_track_integral_top_cutoff = 0.3
-        self.cross_track_integral_bottom_cutoff = -0.3
+        self.cross_track_integral_top_cutoff = 1.5
+        self.cross_track_integral_bottom_cutoff = -1.5
 
-        self.heading_integral_top_cutoff = 1.2
-        self.heading_integral_bottom_cutoff = -1.2
+        self.heading_integral_top_cutoff = 0.5
+        self.heading_integral_bottom_cutoff = -0.5
 
         # Init last previous values
-        self.cross_track_err_last = 0
-        self.heading_err_last = 0
-
+        self.cross_track_err_last = None
+        self.heading_err_last = None
+        self.dt = None
 
         # init kinematics cutoffs
-        self.omega_max = 20
-        self.omega_min = -20
+        self.omega_max = 8
+        self.omega_min = -8
 
         # other init stuff we don't know about
         self.pose_initialized = False
@@ -134,56 +129,57 @@ class lane_controller:
         self.sleepMaintenance = False
 
 
-    def updatePose(self, d, phi, image_timestamp, time_prop=False):
-        # Calculating the delay image processing took
-        timestamp_now = rospy.get_rostime()
-        image_delay_stamp = timestamp_now - image_timestamp
-        print("latency", image_delay_stamp.to_sec())
-
-        # delay from taking the image until now in seconds
-        # image_delay_stamp = image_delay_stamp.secs + image_delay_stamp.nsecs / 1e9
-        # print(image_delay_stamp)
+    def updatePose(self, d, phi):
+        if self.time_update_pose is None:
+            self.time_update_pose = time.time()
+            self.dt = 0
+        else:
+            self.time_update_pose_last = self.time_update_pose
+            self.time_update_pose = time.time()
+            self.dt = self.time_update_pose - self.time_update_pose_last
 
         # update those controller params every iteration
-        self.k_d = 0
-        self.k_theta = 0
+        self.k_d = -2
+        self.k_theta = -3.2
 
-        self.k_Id = 0
-        self.k_Iphi = 0
+        self.k_Id = -0.8
+        self.k_Iphi = -0.6
 
-
-        self.k_Dd = 0
-        self.k_Dphi= 0
+        self.k_Dd = -0
+        self.k_Dphi= -0.12
 
         # Offsets compensating learning or optimize position on lane
-        self.d_offset = 0.03
+        self.d_offset = 0.01
 
-        # Params which are update by OS input
-        self.k_d = float(os.environ['kPd'])
-        self.k_theta = float(os.environ['kPp'])
-        self.k_Id = float(os.environ['kId'])
-        self.k_Iphi = float(os.environ['kIp'])
-        self.k_Dd = float(os.environ['kDd'])
-        self.k_Dphi = float(os.environ['kDp'])
-        self.v_des = float(os.environ['v_des'])
-        # if image_delay_stamp.to_sec() > 0.1 and image_delay_stamp.to_sec() < 1:
-        #     self.v_des = 0.01*(1 - image_delay_stamp.to_sec())
-        # elif image_delay_stamp.to_sec() > 1:
-        #     self.v_des = 0
+        self.v = 0.17
 
-        # time propagation
-        # if time_prop:
-        #     d = d + math.sin(phi)*image_delay_stamp.to_sec()*self.v_prev
-        #     phi = phi + image_delay_stamp.to_sec()*self.omega_prev/360
+        #print("latency:",self.dt)
+
+        if self.phi_last is not None and self.dt is not 0:
+            if np.abs((phi - self.phi_last)/self.dt) > 0.00065:
+                self.k_d = 0
+
+        if self.phi_last is not None:
+            phi = (phi*3 + self.phi_last)/4
+            if phi < 0:
+                phi = phi * 1.23
+
+        if d<0:
+            d = d * 1.1
+
+        if np.abs(phi) > 0.36:
+            if np.sign(phi) == np.sign(1):
+                phi = 0.36
+            else:
+                phi = -0.36
+
 
         # Calc errors
         self.cross_track_err = d - self.d_offset
-        self.heading_err = phi  #*(1-self.cross_track_err)**2 
+        self.heading_err = phi
 
-        currentMillisec = int(round(time.time() * 1000))
-
-        if self.last_ms is not None:
-            self.dt = (currentMillisec - self.last_ms) / 1000.0
+        if self.cross_track_err < 0:
+            self.cross_track_err=self.cross_track_err*3
 
         if self.dt is not 0:
             # Apply Integral
@@ -193,7 +189,6 @@ class lane_controller:
             # Apply Differential
             self.cross_track_differential = (self.cross_track_err - self.cross_track_err_last)/self.dt
             self.heading_differential = (self.heading_err - self.heading_err_last)/self.dt
-
 
         # Check integrals
         if self.cross_track_integral > self.cross_track_integral_top_cutoff:
@@ -206,28 +201,30 @@ class lane_controller:
         if self.heading_integral < self.heading_integral_bottom_cutoff:
             self.heading_integral = self.heading_integral_bottom_cutoff
 
-
-        # if abs(self.cross_track_err) <= 0.011:  # TODO: replace '<= 0.011' by '< delta_d' (but delta_d might need to be sent by the lane_filter_node.py or even lane_filter.py)
-        #     self.cross_track_integral = 0
-        # if abs(self.heading_err) <= 0.051:  # TODO: replace '<= 0.051' by '< delta_phi' (but delta_phi might need to be sent by the lane_filter_node.py or even lane_filter.py)
-        #     self.heading_integral = 0
-        if np.sign(self.cross_track_err) != np.sign(self.cross_track_err_last):  # sign of error changed => error passed zero
-            self.cross_track_integral = 0
-        if np.sign(self.heading_err) != np.sign(self.heading_err_last):  # sign of error changed => error passed zero
-            self.heading_integral = 0
+        if self.cross_track_err_last is not None:
+            if np.sign(self.cross_track_err) != np.sign(self.cross_track_err_last):  # sign of error changed => error passed zero
+                self.cross_track_integral = 0
+            if np.sign(self.heading_err) != np.sign(self.heading_err_last):  # sign of error changed => error passed zero
+                self.heading_integral = 0
 
 
         if not self.fsm_state == "SAFE_JOYSTICK_CONTROL":
             omega = 0
             # Apply Controller to kinematics
-            # P-Controller
             omega += (self.k_d * (self.v_des / self.v_bar) * self.cross_track_err) + (self.k_theta * (self.v_des / self.v_bar) * self.heading_err)
             omega += (self.k_Id * (self.v_des / self.v_bar) * self.cross_track_integral) + (self.k_Iphi * (self.v_des / self.v_bar) * self.heading_integral)
             omega += (self.k_Dd * (self.v_des / self.v_bar) * self.cross_track_differential) + (self.k_Dphi * (self.v_des / self.v_bar) * self.heading_differential)
 
+        # print("Crosstrack_Error: ",self.cross_track_err)
+        # print("Heading_Error: ",self.heading_err)
+        # print("Crosstrack_Int: ",self.cross_track_integral)
+        # print("Heading_Int: ",self.heading_integral)
+        # print("Crosstrack_Diff: ",self.cross_track_differential)
+        # print("Heading_Diff: ",self.heading_differential)
+
 
         # apply magic conversion factors
-        v = (self.v_des / self.v_bar) * self.velocity_to_m_per_s
+        v = self.v * self.velocity_to_m_per_s
         omega = omega * self.omega_to_rad_per_s
 
         # check if kinematic constraints are ok
@@ -239,9 +236,6 @@ class lane_controller:
         # write actual params as pervious params
         self.cross_track_err_last = self.cross_track_err
         self.heading_err_last = self.heading_err
-        self.last_ms = currentMillisec
-
-        self.v_prev = v
-        self.omega_prev = omega
+        self.phi_last = phi
 
         return v, omega

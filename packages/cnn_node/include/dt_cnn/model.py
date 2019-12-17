@@ -37,7 +37,7 @@ class model_dist(nn.Module):
             nn.BatchNorm2d(64))
 
         self.drop_out_lin1 = nn.Dropout(0.4)
-        self.lin1 = nn.Linear(2304 ,512)
+        self.lin1 = nn.Linear(576 ,512)
         self.drop_out_lin2 = nn.Dropout(0.2)
         self.lin2 = nn.Linear(512, 256)
         self.drop_out_lin3 = nn.Dropout(0.1)
@@ -47,7 +47,7 @@ class model_dist(nn.Module):
 
         self.transform = transforms.Compose([
             transforms.Resize(image_res),
-            TransCropHorizon(0.3, set_black=False),
+            TransCropHorizon(0.62, set_black=False),
             # transforms.RandomCrop(, padding=None, pad_if_needed=False, fill=0, padding_mode='constant')
             transforms.Grayscale(num_output_channels=1),
             # TransConvCoord(),
