@@ -142,7 +142,7 @@ class lane_controller:
         self.k_d = -2
         self.k_theta = -3.2
 
-        self.k_Id = -0.8
+        self.k_Id = -0.9
         self.k_Iphi = -0.6
 
         self.k_Dd = -0
@@ -151,7 +151,7 @@ class lane_controller:
         # Offsets compensating learning or optimize position on lane
         self.d_offset = 0.01
 
-        self.v = 0.17
+        self.v = 0.16
 
         #print("latency:",self.dt)
 

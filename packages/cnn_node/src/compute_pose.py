@@ -37,7 +37,6 @@ class CNN_Node(DTROS):
         self.model_th = model_angle(as_gray=True, use_convcoord=False)
         self.model_th.load_state_dict(torch.load(loc_theta))  
         self.angleSpeedConvertsion = SteeringToWheelVelWrapper()
-        # self.pidController = Controller(0.5,0.5,1,1,1,1)
 
         self.pidController = lane_controller()
         self.pidController.setParams()
@@ -48,19 +47,12 @@ class CNN_Node(DTROS):
         self.model_th.eval()
         self.model_th.float()
 
-        self.cmd_exec = None
         self.time_image_rec = None
-        self.time_image_rec_prev = None
-        self.time_prop = False
-        # numpy array with the command history for delay
-        self.cmd_prev = [0, 0]
-        self.state_prev = None
         self.onShutdown_trigger = False
-        self.kalman_update_trigger = False
         self.trigger_car_cmd = True
         self.trigger_wheel_cmd = False
         self.trigger_exec_cmd = False
-        self.stop_pub_pose = False
+        self.stop_pub_pose = True
         
 
         topicSub_image = '/' + self.vehicle + '/camera_node/image/compressed'
@@ -88,24 +80,6 @@ class CNN_Node(DTROS):
         if self.onShutdown_trigger or self.stop_pub_pose:
             return
 
-        # if self.cmd_exec is None:
-        #     self.cmd_exec = rospy.get_rostime()
-
-        # if (rospy.get_rostime().to_sec() - self.cmd_exec.to_sec()) > 0.3 and not self.trigger_exec_cmd:
-        #     self.trigger_exec_cmd = True
-        #     self.cmd_exec = rospy.get_rostime()
-        # elif (rospy.get_rostime().to_sec() - self.cmd_exec.to_sec()) > 1.0 and self.trigger_exec_cmd:
-        #     self.trigger_exec_cmd = False
-        #     self.cmd_exec = rospy.get_rostime()
-
-        # if self.trigger_exec_cmd:
-        #     self.msg_wheels_cmd = WheelsCmdStamped()
-        #     self.msg_wheels_cmd.header.stamp = rospy.get_rostime()
-        #     self.msg_wheels_cmd.vel_left = 0.0
-        #     self.msg_wheels_cmd.vel_right = 0.0
-        #     self.pub_wheels_cmd.publish(self.msg_wheels_cmd)
-        #     return
-
         cv_image = CvBridge().compressed_imgmsg_to_cv2(frame, desired_encoding="passthrough")
         # Convert CV image to PIL image for pytorch
         im_pil = Image.fromarray(cv_image)
@@ -118,40 +92,23 @@ class CNN_Node(DTROS):
         state = [0,0]
         state[0] = self.model_d(X_d).detach().numpy()[0][0]
         state[1] = self.model_th(X_th).detach().numpy()[0][1]
-        print(state)        
+
         if self.debug:
             self.log("states [dist, angle]", state)
 
         v, omega = self.pidController.updatePose(state[0], state[1])
 
-        if self.trigger_car_cmd:
-            car_cmd_msg = Twist2DStamped()
-            car_cmd_msg.header.stamp = rospy.get_rostime()
-            car_cmd_msg.v = v
-            car_cmd_msg.omega = omega
-            self.cmd_prev = [v, omega]
-            self.pub_car_cmd.publish(car_cmd_msg)
+        car_cmd_msg = Twist2DStamped()
+        car_cmd_msg.header.stamp = rospy.get_rostime()
+        car_cmd_msg.v = v
+        car_cmd_msg.omega = omega
+        self.pub_car_cmd.publish(car_cmd_msg)
 
         # Put the wheel commands in a message and publish
         # Record the time the command was given to the wheels_driver
         if self.debug:
             self.log("Car Commands [v [m/s], omega [degr/sec]]",v,omega)
 
-        if self.trigger_wheel_cmd:
-            vel = self.angleSpeedConvertsion.action(np.array([v, omega]))
-            pwm_left, pwm_right = vel.astype(float)
-            self.msg_wheels_cmd.header.stamp = rospy.get_rostime()
-            self.msg_wheels_cmd.vel_left = pwm_left
-            self.msg_wheels_cmd.vel_right = pwm_right
-            self.pub_wheels_cmd.publish(self.msg_wheels_cmd)
-
-        #self.msgLanePose.d = out.detach().numpy()[0][0]
-        #self.msgLanePose.d_ref = 0
-        #self.msgLanePose.phi = out.detach().numpy()[0][1]*3.14159
-        #self.msgLanePose.phi_ref = 0
-        #print(self.msgLanePose.d, self.msgLanePose.phi)
-
-        #self.LanePosePub.publish(self.msgLanePose)
 
     def onShutdown(self):
         """Shutdown procedure.
