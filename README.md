@@ -13,7 +13,8 @@ Two different CNNs are used to compute the distance to the middle lane and the r
 
 
 ### Controller
-The controlles can be found in [packages/cnn_node/include/controller/controller.py](packages/cnn_node/include/controller/controller.py)
+The controller used for this project made use of the already implemented PI-controller of [dt-core](https://github.com/duckietown/dt-core/tree/daffy/packages/lane_control) node. It is a tuned, cleaned-up and asynchronous PID-controller. It weighs deviations towards the asphalt more than towards the other lane.
+The controllers can be found in [packages/cnn_node/include/controller/controller.py](packages/cnn_node/include/controller/controller.py)
 
 
 ## Usage
