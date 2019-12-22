@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -6,6 +9,7 @@ import torchvision.transforms as transforms
 import numpy as np
 from PIL import Image
 
+# Model to compute distance
 class model_dist(nn.Module):
     def __init__(self, as_gray=True, use_convcoord=True):
         super(model_dist, self).__init__()
@@ -48,11 +52,8 @@ class model_dist(nn.Module):
         self.transform = transforms.Compose([
             transforms.Resize(image_res),
             TransCropHorizon(0.62, set_black=False),
-            # transforms.RandomCrop(, padding=None, pad_if_needed=False, fill=0, padding_mode='constant')
             transforms.Grayscale(num_output_channels=1),
-            # TransConvCoord(),
             ToCustomTensor(False),
-            # transforms.Normalize(mean = [0.3,0.5,0.5],std = [0.21,0.5,0.5])
             ])
 
 
@@ -71,7 +72,7 @@ class model_dist(nn.Module):
 
         return out
 
-
+# Model to compute heading
 class model_angle(nn.Module):
     def __init__(self, as_gray=True, use_convcoord=True):
         super(model_angle, self).__init__()
@@ -114,11 +115,8 @@ class model_angle(nn.Module):
         self.transform = transforms.Compose([
             transforms.Resize(image_res),
             TransCropHorizon(0.5, set_black=False),
-            # transforms.RandomCrop(, padding=None, pad_if_needed=False, fill=0, padding_mode='constant')
             transforms.Grayscale(num_output_channels=1),
-            # TransConvCoord(),
             ToCustomTensor(False),
-            # transforms.Normalize(mean = [0.3,0.5,0.5],std = [0.21,0.5,0.5])
             ])
 
 
@@ -133,38 +131,6 @@ class model_angle(nn.Module):
         out = F.relu(self.lin2(out))
         out = self.drop_out_lin3(out)
         out = F.tanh(self.lin3(out))
-
-        return out
-
-
-class shortModel(nn.Module):
-    def __init__(self, as_gray=True, use_convcoord=True):
-        super(shortModel, self).__init__()
-
-        # Handle dimensions
-        if as_gray:
-            self.input_channels = 1
-        else:
-            self.input_channels = 3
-
-        if use_convcoord:
-            self.input_channels += 2
-
-        # 1 input image channel, 6 output channels, 3x3 square convolution
-        self.layer1 = nn.Sequential(
-            nn.Conv2d(self.input_channels, 32, kernel_size=5, stride=1, padding=2),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.BatchNorm2d(32))
-
-    def forward(self, x):
-        # print('dim of input')
-        # print(x.size())
-        # print(x[0][2][0])
-        out = self.layer1(x)
-        # print('dim after L1')
-
-        # print(out.size())
 
         return out
 
@@ -259,10 +225,6 @@ class TransCropHorizon(object):
             image[:][0:crop_pixels_from_top-1][:] = np.zeros_like(image[:][0:crop_pixels_from_top-1][:])
         else:
             image = image[:][crop_pixels_from_top:-1][:]
-
-        # plt.figure()
-        # plt.imshow(image)
-        # plt.show()  # display it
 
         # convert again to PIL
         image = Image.fromarray(image)
